@@ -27,7 +27,7 @@ def spinner(msg="Carregando"):
 
 # ===== CONFIGURAÇÕES LOGIN =====
 usuario = "VAGAS-CERA1"
-senha = "080693"
+senha = "101010"
 
 API_USER = "jose.almeida"
 API_PASS = "gn6Z7tEogEU6GAHOQPRe"
