@@ -12,6 +12,7 @@ from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.chrome.service import Service
 import threading
 import itertools
+import json
 
 loading = False
 
@@ -19,15 +20,42 @@ def spinner(msg="Carregando"):
     for c in itertools.cycle(["|", "/", "-", "\\"]):
         if not loading:
             break
-
         print(f"\r{msg} {c}", end="", flush=True)
         time.sleep(0.1)
-
     print("\r" + " " * 50 + "\r", end="")
 
-# ===== CONFIGURAÇÕES LOGIN =====
-usuario = "VAGAS-CERA1"
-senha = "101010"
+CONFIG_FILE = "config.json"
+
+def carregar_config():
+    config_padrao = {
+        "usuario": "",
+        "senha": ""
+    }
+
+    if not os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(config_padrao, f, indent=4, ensure_ascii=False)
+        print(
+            f"\nArquivo '{CONFIG_FILE}' criado.\n"
+            "Preencha o usuário e a senha e execute o programa novamente."
+        )
+        exit()
+
+    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
+    usuario = config.get("usuario", "").strip()
+    senha = config.get("senha", "").strip()
+
+    if not usuario or not senha:
+        print(
+            f"\nPreencha os campos 'usuario' e 'senha' em '{CONFIG_FILE}'."
+        )
+        exit()
+
+    return usuario, senha
+
+usuario, senha = carregar_config()
 
 API_USER = "jose.almeida"
 API_PASS = "gn6Z7tEogEU6GAHOQPRe"
@@ -37,8 +65,31 @@ BASE_API = "https://sisreg-es.saude.gov.br/solicitacao-ambulatorial-ms-tres-lago
 BASE = "https://sisregiii.saude.gov.br"
 start_url = BASE + "/cgi-bin/index#"
 
-html_file = "vagas.html"
+html_file = "monitor_vagas.html"
 
+def load_existing_html():
+    data = {}
+
+    if os.path.exists(html_file):
+        with open(html_file, encoding="utf-8") as f:
+            html = f.read()
+
+            rows = re.findall(
+                r"<tr>\s*"
+                r"<td>(.*?)</td>\s*"
+                r"<td>(.*?)</td>\s*"
+                r"<td>(.*?)</td>\s*"
+                r"<td.*?>(.*?)</td>\s*"
+                r"<td>(.*?)</td>\s*"
+                r"</tr>",
+                html,
+                re.DOTALL
+            )
+
+            for nome, codigo, fichas, vaga, verif in rows:
+                data[codigo] = [nome, fichas, vaga, verif]
+
+    return data
 
 def carregar_codigos():
     auth = HTTPBasicAuth(API_USER, API_PASS)
@@ -82,6 +133,7 @@ def carregar_codigos():
         r.raise_for_status()
 
         hits = r.json().get("hits", {}).get("hits", [])
+
         if not hits:
             break
 
@@ -117,7 +169,6 @@ def carregar_codigos():
 
     return list(codes.keys()), list(codes.values())
 
-
 loading = True
 
 t = threading.Thread(
@@ -129,7 +180,15 @@ t.start()
 
 codes, nomes = carregar_codigos()
 
+resultados_existentes = load_existing_html()
+
+for codigo, dados in resultados_existentes.items():
+    if codigo not in codes:
+        codes.append(codigo)
+        nomes.append(dados[0])
+
 loading = False
+
 t.join()
 
 print(
@@ -137,12 +196,14 @@ print(
 )
 
 print("\n=== PROCEDIMENTOS COM PENDÊNCIA ===")
+
 for i, (c, n) in enumerate(zip(codes, nomes), 1):
     print(f"{i:03d} | {c} | {n}")
+
 print(f"\nTotal: {len(codes)}\n")
 
-
 options = webdriver.ChromeOptions()
+
 options.add_argument("--start-maximized")
 options.add_argument("--log-level=3")
 
@@ -176,23 +237,24 @@ def login(usuario, senha):
     wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "f_principal")))
     driver.switch_to.default_content()
 
-
 def load_in_iframe(path):
     iframe_src = BASE + path
+
     driver.switch_to.default_content()
+
     driver.execute_script(
         "var f=document.querySelector('iframe[name=\"f_principal\"]');"
         "if(!f)f=document.getElementById('f_main');"
         "if(f){f.src=arguments[0];}",
         iframe_src
     )
+
     try:
         wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "f_principal")))
         return True
     except TimeoutException:
         driver.switch_to.default_content()
         return False
-
 
 def process_code(code):
     if not load_in_iframe("/cgi-bin/autorizador"):
@@ -211,22 +273,45 @@ def process_code(code):
         pass
 
     driver.find_element(By.XPATH, "//input[@value='CONSULTAR']").click()
+
     time.sleep(0.8)
 
-    try:
-        driver.find_element(By.XPATH, "//*[contains(text(),'SOLICITAÇÕES INEXISTENTES')]")
-        return 0, "sem fichas"
-    except:
-        pass
-
     qtd = 0
-    try:
-        el = wait.until(EC.visibility_of_element_located((By.XPATH, "//*[contains(text(),'Solicitações (')]")))
-        m = re.search(r"\((\d+)\)", el.text)
-        if m:
-            qtd = int(m.group(1))
-    except:
-        pass
+
+    for tentativa in range(3):
+        try:
+            driver.find_element(
+                By.XPATH,
+                "//*[contains(text(),'SOLICITAÇÕES INEXISTENTES')]"
+            )
+            return 0, "sem fichas"
+        except NoSuchElementException:
+            pass
+
+        try:
+            el = wait.until(
+                EC.visibility_of_element_located(
+                    (By.XPATH, "//*[contains(text(),'Solicitações (')]")
+                )
+            )
+            m = re.search(r"\((\d+)\)", el.text)
+            if m:
+                qtd = int(m.group(1))
+                break
+        except (TimeoutException, NoSuchElementException):
+            pass
+
+        if tentativa < 2:
+            time.sleep(1)
+    else:
+        agora_log = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        with open("log.txt", "a", encoding="utf-8") as log:
+            log.write(
+                f"[{agora_log}] "
+                f"Erro ao obter quantidade de solicitações - "
+                f"procedimento {code}\n"
+            )
+        return None, None
 
     vaga = "sem vaga"
 
@@ -259,107 +344,63 @@ def process_code(code):
 
     return qtd, vaga
 
-
-def load_existing_html():
-    data = {}
-
-    if os.path.exists(html_file):
-        with open(html_file, encoding="utf-8") as f:
-
-            html = f.read()
-
-            rows = re.findall(
-                r"<tr>\s*"
-                r"<td>(.*?)</td>\s*"
-                r"<td>(.*?)</td>\s*"
-                r"<td>(.*?)</td>\s*"
-                r"<td.*?>(.*?)</td>\s*"
-                r"<td>(.*?)</td>\s*"
-                r"</tr>",
-                html,
-                re.DOTALL
-            )
-
-            for nome, codigo, fichas, vaga, verif in rows:
-                data[codigo] = [nome, fichas, vaga, verif]
-
-    return data
-
-
 def save_html(data_dict):
-
     html = """
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<title>Vagas SISREG</title>
-
+<title>Monitor de Vagas SISREG</title>
 <style>
-
 body{
     font-family:Arial,sans-serif;
     margin:20px;
     background:#f4f4f4;
 }
-
 h1{
     margin-bottom:15px;
 }
-
 input{
     width:100%;
     padding:10px;
     margin-bottom:15px;
     box-sizing:border-box;
 }
-
 table{
     width:100%;
     border-collapse:collapse;
     background:white;
 }
-
 th,td{
     padding:10px;
     border-bottom:1px solid #ddd;
 }
-
 th{
     background:#333;
     color:white;
     cursor:pointer;
     user-select:none;
 }
-
 tr:hover{
     background:#f5f5f5;
 }
-
 .sem-vaga{
     color:#888;
 }
-
 .com-vaga{
     color:green;
     font-weight:bold;
 }
-
 </style>
-
 <script>
-
 function searchTable(){
-
     let filtro =
         document.getElementById("search")
         .value
         .toUpperCase();
-
     document
         .querySelectorAll("tbody tr")
         .forEach(row => {
-
             row.style.display =
                 [...row.cells]
                 .some(c =>
@@ -371,16 +412,12 @@ function searchTable(){
                 : "none";
         });
 }
-
 function parseDate(txt){
-
     let m = txt.match(
         /(\\d{2})\\/(\\d{2})\\/(\\d{4})(?:\\s+(\\d{2}):(\\d{2}))?/
     );
-
     if(!m)
-        return 0;
-
+        return Infinity;
     return new Date(
         parseInt(m[3]),
         parseInt(m[2]) - 1,
@@ -389,73 +426,51 @@ function parseDate(txt){
         parseInt(m[5] || 0)
     ).getTime();
 }
-
 function sortTable(col){
-
     const tbody =
         document.querySelector("tbody");
-
     const rows =
         Array.from(
             tbody.querySelectorAll("tr")
         );
-
     const asc =
         tbody.dataset.sort != col;
-
     rows.sort((a,b)=>{
-
         let va =
             a.cells[col].innerText.trim();
-
         let vb =
             b.cells[col].innerText.trim();
-
         if(col === 2){
-
             return asc
                 ? Number(va)-Number(vb)
                 : Number(vb)-Number(va);
         }
-
         if(col === 3){
-
             return asc
                 ? parseDate(va)-parseDate(vb)
                 : parseDate(vb)-parseDate(va);
         }
-
         return asc
             ? va.localeCompare(vb)
             : vb.localeCompare(va);
     });
-
     tbody.innerHTML = "";
-
     rows.forEach(r =>
         tbody.appendChild(r)
     );
-
     tbody.dataset.sort =
         asc ? col : "";
 }
-
 </script>
-
 </head>
-
 <body>
-
-<h1>Vagas SISREG</h1>
-
+<h1>Monitor de Vagas SISREG</h1>
 <input
 id="search"
 placeholder="Buscar..."
 onkeyup="searchTable()"
 />
-
 <table>
-
 <thead>
 <tr>
 <th onclick="sortTable(0)">Nome</th>
@@ -465,12 +480,10 @@ onkeyup="searchTable()"
 <th onclick="sortTable(4)">Verificado</th>
 </tr>
 </thead>
-
 <tbody>
 """
 
     for codigo, v in data_dict.items():
-
         classe = (
             "com-vaga"
             if "sem vaga" not in str(v[2]).lower()
@@ -497,7 +510,6 @@ onkeyup="searchTable()"
     with open(html_file, "w", encoding="utf-8") as f:
         f.write(html)
 
-
 try:
     login(usuario, senha)
 
@@ -506,29 +518,22 @@ try:
     hoje = datetime.now().strftime("%d/%m")
 
     for i, code in enumerate(codes):
-
         nome = nomes[i]
 
-        # Se já existe no HTML e foi verificado hoje, pula
         if code in resultados:
-
             ultima_verificacao = str(resultados[code][3])
 
             if ultima_verificacao.startswith(hoje):
-
                 print(
                     f"\n[{i+1}/{len(codes)}] "
                     f"Pulando procedimento "
                     f"{code} - {nome} "
                     f"(já verificado hoje)"
                 )
-
                 continue
 
         while True:
-
             try:
-
                 print(
                     f"\n[{i+1}/{len(codes)}] "
                     f"Analisando procedimento "
@@ -536,6 +541,15 @@ try:
                 )
 
                 qtd, vaga = process_code(code)
+
+                if qtd == 0 and vaga == "sem fichas":
+                    resultados.pop(code, None)
+                    save_html(resultados)
+                    print(
+                        f"✓ Removido | {code} - {nome} "
+                        f"(SOLICITAÇÕES INEXISTENTES)"
+                    )
+                    break
 
                 if qtd is None and vaga is None:
                     raise Exception(
@@ -562,20 +576,16 @@ try:
                 break
 
             except Exception as e:
-
                 print(
                     f"\n⚠ Erro ao processar "
                     f"{code} - {nome}"
                 )
-
                 print(f"Detalhes: {e}")
-
                 print(
                     "\nResolva o CAPTCHA \n"
                     "acesse a pagina de consultas\n"
                     "e pressione ENTER no terminal para continuar."
                 )
-
                 input()
 
 finally:
