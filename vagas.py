@@ -391,6 +391,10 @@ tr:hover{
     color:green;
     font-weight:bold;
 }
+.nao-identificado{
+    color:#e67e22;
+    font-weight:bold;
+}
 </style>
 <script>
 function searchTable(){
@@ -398,16 +402,26 @@ function searchTable(){
         document.getElementById("search")
         .value
         .toUpperCase();
+    let apenasPendentes =
+        document.getElementById("filtroPendentes")
+        .checked;
     document
         .querySelectorAll("tbody tr")
         .forEach(row => {
-            row.style.display =
+            let bateBusca =
                 [...row.cells]
                 .some(c =>
                     c.innerText
                     .toUpperCase()
                     .includes(filtro)
-                )
+                );
+            let bateFiltroPendente =
+                !apenasPendentes ||
+                row.cells[3]
+                .classList
+                .contains("nao-identificado");
+            row.style.display =
+                (bateBusca && bateFiltroPendente)
                 ? ""
                 : "none";
         });
@@ -425,6 +439,12 @@ function parseDate(txt){
         parseInt(m[4] || 0),
         parseInt(m[5] || 0)
     ).getTime();
+}
+function getVagaWeight(cell){
+    if(cell.classList.contains("nao-identificado")){
+        return 9999999999998;
+    }
+    return parseDate(cell.innerText.trim());
 }
 function sortTable(col){
     const tbody =
@@ -447,8 +467,8 @@ function sortTable(col){
         }
         if(col === 3){
             return asc
-                ? parseDate(va)-parseDate(vb)
-                : parseDate(vb)-parseDate(va);
+                ? getVagaWeight(a.cells[3])-getVagaWeight(b.cells[3])
+                : getVagaWeight(b.cells[3])-getVagaWeight(a.cells[3]);
         }
         return asc
             ? va.localeCompare(vb)
@@ -470,6 +490,14 @@ id="search"
 placeholder="Buscar..."
 onkeyup="searchTable()"
 />
+<label style="display:block;margin-bottom:15px;">
+<input
+type="checkbox"
+id="filtroPendentes"
+onchange="searchTable()"
+/>
+Mostrar apenas pendentes de revisão
+</label>
 <table>
 <thead>
 <tr>
@@ -484,11 +512,14 @@ onkeyup="searchTable()"
 """
 
     for codigo, v in data_dict.items():
-        classe = (
-            "com-vaga"
-            if "sem vaga" not in str(v[2]).lower()
-            else "sem-vaga"
-        )
+        texto_vaga = str(v[2]).strip()
+ 
+        if texto_vaga.lower() == "não foi possível analisar":
+            classe = "nao-identificado"
+        elif "sem vaga" not in texto_vaga.lower():
+            classe = "com-vaga"
+        else:
+            classe = "sem-vaga"
 
         html += f"""
 <tr>
