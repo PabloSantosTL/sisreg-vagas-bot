@@ -338,7 +338,7 @@ def process_code(code):
                     val = driver.find_element(By.NAME, "horario").get_attribute("value")
                     vaga = val.split("|")[1]
                 except:
-                    vaga = "vaga encontrada"
+                    vaga = "falha_rede"
     except:
         pass
 
@@ -517,6 +517,8 @@ try:
 
     hoje = datetime.now().strftime("%d/%m")
 
+    fila_retry = []
+
     for i, code in enumerate(codes):
         nome = nomes[i]
 
@@ -541,6 +543,10 @@ try:
                 )
 
                 qtd, vaga = process_code(code)
+
+                if vaga == "falha_rede":
+                    fila_retry.append(code) # Joga no vetor
+                    continue
 
                 if qtd == 0 and vaga == "sem fichas":
                     resultados.pop(code, None)
