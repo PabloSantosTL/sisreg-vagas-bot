@@ -12,7 +12,7 @@ from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.chrome.service import Service
 import threading
 import itertools
-import json
+from tela_login import tela_login
 
 loading = False
 
@@ -24,38 +24,7 @@ def spinner(msg="Carregando"):
         time.sleep(0.1)
     print("\r" + " " * 50 + "\r", end="")
 
-CONFIG_FILE = "config.json"
-
-def carregar_config():
-    config_padrao = {
-        "usuario": "",
-        "senha": ""
-    }
-
-    if not os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(config_padrao, f, indent=4, ensure_ascii=False)
-        print(
-            f"\nArquivo '{CONFIG_FILE}' criado.\n"
-            "Preencha o usuário e a senha e execute o programa novamente."
-        )
-        exit()
-
-    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-        config = json.load(f)
-
-    usuario = config.get("usuario", "").strip()
-    senha = config.get("senha", "").strip()
-
-    if not usuario or not senha:
-        print(
-            f"\nPreencha os campos 'usuario' e 'senha' em '{CONFIG_FILE}'."
-        )
-        exit()
-
-    return usuario, senha
-
-usuario, senha = carregar_config()
+usuario, senha = tela_login()
 
 API_USER = "jose.almeida"
 API_PASS = "gn6Z7tEogEU6GAHOQPRe"
